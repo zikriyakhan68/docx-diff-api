@@ -1,47 +1,35 @@
+import base64
+import io
 from flask import Flask, request, jsonify
 from docx import Document
-import tempfile
-import os
 import difflib
 
 app = Flask(__name__)
 
-def get_text_from_docx(file_path):
-    doc = Document(file_path)
-    return '\n'.join([para.text for para in doc.paragraphs])
-
 @app.route('/compare', methods=['POST'])
 def compare_docs():
-    if 'old' not in request.files or 'new' not in request.files:
-        return jsonify({'error': 'Missing files'}), 400
+    try:
+        data = request.get_json()
+        old_b64 = data['old_base64']
+        new_b64 = data['new_base64']
 
-    old_file = request.files['old']
-    new_file = request.files['new']
+        old_bytes = base64.b64decode(old_b64)
+        new_bytes = base64.b64decode(new_b64)
 
-    with tempfile.NamedTemporaryFile(delete=False) as f1:
-        f1.write(old_file.read())
-        old_path = f1.name
+        old_doc = Document(io.BytesIO(old_bytes))
+        new_doc = Document(io.BytesIO(new_bytes))
 
-    with tempfile.NamedTemporaryFile(delete=False) as f2:
-        f2.write(new_file.read())
-        new_path = f2.name
+        old_text = "\n".join([para.text for para in old_doc.paragraphs])
+        new_text = "\n".join([para.text for para in new_doc.paragraphs])
 
-    old_text = get_text_from_docx(old_path)
-    new_text = get_text_from_docx(new_path)
+        diff = "\n".join(difflib.unified_diff(
+            old_text.splitlines(),
+            new_text.splitlines(),
+            fromfile='old.docx',
+            tofile='new.docx'
+        ))
 
-    diff = difflib.unified_diff(
-        old_text.splitlines(),
-        new_text.splitlines(),
-        fromfile='Previous Version',
-        tofile='Current Version',
-        lineterm=''
-    )
-    result = '\n'.join(diff)
+        return jsonify({'diff': diff})
 
-    os.remove(old_path)
-    os.remove(new_path)
-
-    return jsonify({'diff': result})
-
-if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=10000)
+    except Exception as e:
+        return jsonify({'error': str(e)}), 400
